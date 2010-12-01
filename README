@@ -1,0 +1,52 @@
+
+This nmap NSE script is a learning test tool.
+
+It's aim is to try 'brute-force' attempts on guessing valid values for a UUID parameter.
+
+
+let's say you have a website protecting download data by obscurity/UUID :
+
+Valid query :
+ http://dl.example.org/dl/?uuid=f410c7b6-68ad-407a-99f5-71b34f12e819
+ -> returns a file
+ Expected Headers :
+
+HTTP/1.0 200 OK
+Expires: Thu, 01 Jan 1970 00:00:00 GMT
+title: Service dl: myfile pdf
+Server: IBM_HTTP_Server
+Content-Disposition: attachment; filename="russian_brides.pdf"
+Content-Length: 70884
+Date: Wed, 01 Dec 2010 01:34:55 GMT
+Content-Transfer-Encoding: binary
+Content-Type: application/pdf
+Length: 70884 (69K) [application/pdf]
+
+
+Invalid query :
+ http://dl.example.org/dl/?uuid=f410c7b6-68ad-407a-99f5-71b34f12e819
+ -> returns a 200 - user level error page
+ Expected Headers :
+HTTP/1.0 200 OK
+Server: IBM_HTTP_Server
+Date: Wed, 01 Dec 2010 01:34:15 GMT
+Content-Language: fr-FR
+Content-Type: text/html; charset=UTF-8
+Length: unspecified [text/html] 
+
+
+Here we will choose to discriminate on header['expires'] ( nmap header gets all tolower() ).
+
+OTHEROPTS="-T3 --min-parallelism=2 --max-parallelism=2 -d1 --stats-every=10m -oA myscan.log"
+TARGETS=dl.example.org
+HOSTNAME=dl.example.org
+URI="/?"
+ARG=uuid
+PORT=80
+
+  nmap -n $TARGETS -p $PORT --script=./http-brute-random-uuid-param.nse --script-arg=hostname=$HOSTNAME,method=$METHOD,uri="$URI",arg=$ARG,limit=$LIMIT --host-timeout=$TIMEOUT $OTHEROPTS
+
+
+
+
+
