@@ -115,14 +115,17 @@ local print_response = function(response)
 end
 
 
-
-
 -- generates a type 4 UUID
 local get_uuid = function()
   return uuid.new()
 end
 
 
+--
+-- Validates the responses.
+--   Here we just check for the 'expires' headers.
+--   The test could be extended or simplified for status code, or other fields...
+--
 --  response = {
 --    status=nil,
 --    ["status-line"]=nil,
@@ -132,18 +135,18 @@ end
 --  }
 
 local validate_p = function(response)
-	local start, stop
-	local body
+  local start, stop
+  local body
 
   -- cheating 
-	if response.status ~= 200 or
-	   response.header["expires"] == nil then
-		return false
-	end
+  if response.status ~= 200 or
+     response.header["expires"] == nil then
+    return false
+  end
   stdnse.print_debug("Found Expires : ") 
 
-	if response.header["content-disposition"] == nil then
-	  local ctnt = ""
+  if response.header["content-disposition"] == nil then
+    local ctnt = ""
     stdnse.print_debug("No file attached ??!!")
     print_response(response) 
   else
@@ -152,9 +155,7 @@ local validate_p = function(response)
     if filename ~= nil then
       stdnse.print_debug("Found file " .. filename) 
     end
-	end
-
-	--table.insert(response.rawheader, "(Request type: " .. request_type .. ")")
+  end
 
   return true
   
@@ -162,7 +163,10 @@ end
 
 
 --
---	2k:	Completed NSE at 22:51, 158.50s elapsed
+-- use the http lib and the pipeline function to queue as many request in as few 
+--  SYN as possible.
+-- 
+--  2k:  Completed NSE at 22:51, 158.50s elapsed
 --
 --
 --
@@ -171,81 +175,73 @@ local brute_param_pipeline = function(host,port,hostname,method,uri,param,limit)
   local found = {}
   local all = {}
   local uuids = {}
-	local options = {
-		header = {
+  local options = {
+    header = {
       -- set Host: header
-			Host = hostname,
-			["User-Agent"]  = "Mozilla/5.0 (compatible; One; two)",
-		},
+      Host = hostname,
+      -- ncrack should be better but.. there's no LUA support ... sad sad sad...
+      ["User-Agent"]  = "Mozilla/5.0 (compatible; One; two)",
+    },
   }
     
   for i = 1, limit, 1 do
       
     local uuid = get_uuid()
     --stdnse.print_debug("Generated " .. uuid) 
-	  tested[i] = uuid
+    tested[i] = uuid
     
     local path = uri .. param .. "=" .. uuid
     
     stdnse.print_debug(1,"Queuing %s",path) 
     -- host, port , path, options, cookies, allrequests
-		all = http.pipeline_add(path,options,all,method)
+    all = http.pipeline_add(path,options,all,method)
 
   end
 
   
-	--local results = http.pipeline(host, port, all)
-	local results = http.pipeline_go(host, port, all)
+  --local results = http.pipeline(host, port, all)
+  local results = http.pipeline_go(host, port, all)
   -- results == {response}
   
-	-- Check for http.pipeline error
-	if(results == nil) then
-		stdnse.print_debug(1, "http-enum.nse: http.pipeline returned nil for " .. host[1])
-		return stdnse.format_output(false, "http.pipeline returned nil")
-	end
+  -- Check for http.pipeline error
+  if(results == nil) then
+    stdnse.print_debug(1, "http-enum.nse: http.pipeline returned nil for " .. host[1])
+    return stdnse.format_output(false, "http.pipeline returned nil")
+  end
 
-	for i, response in pairs(results) do
-	
-	  --print_response(response)
-	
-		-- Build the status code, if it isn't a 200
-		local status = ""
-		if(response.status ~= 200) then
-  		stdnse.print_debug(1,"Got bas status code for param %s ?",tested[i])
-		end
-		stdnse.print_debug(2,"Got result for status %s",response.status)
+  for i, response in pairs(results) do
+  
+    --print_response(response)
+  
+    -- Build the status code, if it isn't a 200
+    local status = ""
+    if(response.status ~= 200) then
+      stdnse.print_debug(1,"Got bas status code for param %s ?",tested[i])
+    end
+    stdnse.print_debug(2,"Got result for status %s",response.status)
 
     --if i%1000 == 0 then
-  	--	stdnse.print_debug(1,"Parsing results num %s",i)
+    --  stdnse.print_debug(1,"Parsing results num %s",i)
     --end
 
     stdnse.print_debug(2,"Validating param %s ",tested[i])
     if validate_p(response) then
       local uuid = tested[i]
       found[#found+1] = uuid
-	    stdnse.print_debug(1,"Found " .. uuid) 
+      stdnse.print_debug(1,"Found " .. uuid) 
     end
   end
 
   local resultsstr ='Tested:' .. #results .. "/" .. #tested
   resultsstr = resultsstr .. "\n  Found: " .. #found
-	if #found > 0 then
-    for i=1, #found do resultsstr = resultsstr .. "\n  " .. param .. ":" .. found[i] end	    
+  if #found > 0 then
+    for i=1, #found do resultsstr = resultsstr .. "\n  " .. param .. ":" .. found[i] end      
   end
 
 
-	return stdnse.format_output(true, resultsstr)
-  	
+  return stdnse.format_output(true, resultsstr)
+    
 end
-
-
-
-
-
-
-
-
-
 
 
 portrule = shortport.port_or_service({80,443}, {"http","https"})
@@ -260,25 +256,25 @@ action = function(host, port)
   local param = 'id'
   local limit = 100
 
-	-- Get the base hostname, if in argument
-	if(nmap.registry.args.hostname ~= nil) then
-		--if(type(nmap.registry.args.path) == 'table') then
-		--	paths = nmap.registry.args.path
-		--else
-		hostname = nmap.registry.args.hostname
-	end
-	if(nmap.registry.args.method ~= nil) then
-		method = nmap.registry.args.method
-	end
-	if(nmap.registry.args.uri ~= nil) then
-		uri = nmap.registry.args.uri
-	end
-	if(nmap.registry.args.param ~= nil) then
-		param = nmap.registry.args.param
-	end
-	if(nmap.registry.args.limit ~= nil) then
-		limit = nmap.registry.args.limit
-	end
+  -- Get the base hostname, if in argument
+  if(nmap.registry.args.hostname ~= nil) then
+    --if(type(nmap.registry.args.path) == 'table') then
+    --  paths = nmap.registry.args.path
+    --else
+    hostname = nmap.registry.args.hostname
+  end
+  if(nmap.registry.args.method ~= nil) then
+    method = nmap.registry.args.method
+  end
+  if(nmap.registry.args.uri ~= nil) then
+    uri = nmap.registry.args.uri
+  end
+  if(nmap.registry.args.param ~= nil) then
+    param = nmap.registry.args.param
+  end
+  if(nmap.registry.args.limit ~= nil) then
+    limit = nmap.registry.args.limit
+  end
   stdnse.print_debug(2,"Hostname is  " .. hostname) 
   stdnse.print_debug(2,"Method is " .. method) 
   stdnse.print_debug(2,"%s URI is %s",method, uri) 
@@ -286,5 +282,6 @@ action = function(host, port)
   stdnse.print_debug(2,"LIMIT =  " .. limit) 
 
   return brute_param_pipeline(host,port,hostname,method,uri,param,limit)
-	  
+    
 end
+
