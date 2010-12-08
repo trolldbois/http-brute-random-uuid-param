@@ -3,7 +3,10 @@ description = [[
 This nmap NSE script is a learning test tool.
 
 It's aim is to try 'brute-force' attempts on guessing valid values for a UUID parameter.
+Quoting Wikipedia http://en.wikipedia.org/wiki/Universally_unique_identifier#Random_UUID_probability_of_duplicates :
 
+  "In other words, only after generating 1 billion UUIDs every second for the next 100 years, 
+  the probability of creating just one duplicate would be about 50%."
 
 let's say you have a website protecting download data by obscurity/UUID :
 
@@ -47,6 +50,7 @@ Here we will choose to discriminate on header['expires'] ( nmap header gets all 
 -- OTHEROPTS="-T3 --min-parallelism=2 --max-parallelism=2 -d1 --stats-every=10m -oA myscan.log"
 -- TARGETS=dl.example.org
 -- HOSTNAME=dl.example.org
+-- METHOD='HEAD'
 -- URI="/?"
 -- ARG=uuid
 -- PORT=80
@@ -64,16 +68,14 @@ Here we will choose to discriminate on header['expires'] ( nmap header gets all 
 --
 -- Summary
 -- -------
---
--- @args http-brute-random-uuid-param.path points to the path protected by authentication
+-- 
 -- @args http-brute-random-uuid-param.hostname sets the host header in case of virtual 
 --       hosting
--- @args http-brute-random-uuid-param.uservar sets the http-variable name that holds the
---		 username used to authenticate. A simple autodetection of this variable
---       is attempted.
--- @args http-brute-random-uuid-param.passvar sets the http-variable name that holds the
---		 password used to authenticate. A simple autodetection of this variable
---       is attempted.
+-- @args http-brute-random-uuid-param.method sets the HTTP method
+-- @args http-brute-random-uuid-param.uri sets the uri path without the param, 
+--       but with other param if needed (? included)
+-- @args http-brute-random-uuid-param.param sets the parameter name
+-- @args http-brute-random-uuid-param.limit sets the max number of guesses
 
 
 --
@@ -115,71 +117,9 @@ end
 
 
 
-
+-- generates a type 4 UUID
 local get_uuid = function()
   return uuid.new()
-end
-
---- Validates the HTTP response and checks for modifications.
---@param response The HTTP response from the server.
---@param original The original HTTP request sent to the server.
---@return A string describing the changes (if any) between the response and
--- request.
-
-local validate = function(response)
-	local start, stop
-	local body
-
-  -- cheating 
-	if not response:match("HTTP/1.[01] 200") or
-	   not response:match("Expires: Thu, 01 Jan 1970 00:00:00 GMT") then
-		return false
-	end
-
-  stdnse.print_debug("Found file") 
-  stdnse.print_debug("Found Expires : ") 
-
-  return true
-  
-end
-
-
-
-local brute_param = function(host,port,hostname,method,uri,param)
-  local tested = {}
-  local found = {}
-  local nb = 0   
-	local options = {
-		header = {
-      -- set Host: header
-			Host = hostname,
-			["User-Agent"]  = "Mozilla/5.0 (compatible; One; two)",
-		},
-  }
-  
-  for i = 0, 100, 1 do
-  
-    local uuid = get_uuid()
-    stdnse.print_debug("Generated " .. uuid) 
-	  tested[i] = uuid
-
-	  local cmd = uri .. param .. "=" .. uuid .. " HTTP/1.0\r\n\r\n"
-
-    -- pipeline should be better...
-    -- options are not parsed :/
-	  local sd, response = comm.tryssl(host, port, cmd, options)
-	  if not sd then 
-		  stdnse.print_debug("Unable to open connection") 
-		  return
-	  end
-	  if validate(response) then
-	    found[nb] = uuid
-	    nb=nb+1
-		  stdnse.print_debug("Found " .. uuid) 
-	  end
-	end  
-	
-	return "Found " .. found
 end
 
 
@@ -221,7 +161,11 @@ local validate_p = function(response)
 end
 
 
-
+--
+--	2k:	Completed NSE at 22:51, 158.50s elapsed
+--
+--
+--
 local brute_param_pipeline = function(host,port,hostname,method,uri,param,limit)
   local tested = {}
   local found = {}
@@ -245,17 +189,13 @@ local brute_param_pipeline = function(host,port,hostname,method,uri,param,limit)
     
     stdnse.print_debug(1,"Queuing %s",path) 
     -- host, port , path, options, cookies, allrequests
-		all = http.pGet(host, port, path, options, nil, all)
-		--all = http.pipeline_add(path,options,all)
+		all = http.pipeline_add(path,options,all,method)
+
   end
 
-  --local uuid='8a9ff85d-849c-4a05-8709-769a4a065845'
-  --tested[#tested+1] = uuid
-  --local path = uri .. param .. "=" .. uuid
-  --stdnse.print_debug(1,"Queuing %s",path) 
-	--all = http.pGet(host, port, path, options, nil, all)
   
-	local results = http.pipeline(host, port, all)
+	--local results = http.pipeline(host, port, all)
+	local results = http.pipeline_go(host, port, all)
   -- results == {response}
   
 	-- Check for http.pipeline error
@@ -271,7 +211,7 @@ local brute_param_pipeline = function(host,port,hostname,method,uri,param,limit)
 		-- Build the status code, if it isn't a 200
 		local status = ""
 		if(response.status ~= 200) then
-  		stdnse.print_debug(1,"Got bas status code for arg %s ?",tested[i])
+  		stdnse.print_debug(1,"Got bas status code for param %s ?",tested[i])
 		end
 		stdnse.print_debug(2,"Got result for status %s",response.status)
 
@@ -279,7 +219,7 @@ local brute_param_pipeline = function(host,port,hostname,method,uri,param,limit)
   	--	stdnse.print_debug(1,"Parsing results num %s",i)
     --end
 
-    stdnse.print_debug(2,"Validating arg %s ",tested[i])
+    stdnse.print_debug(2,"Validating param %s ",tested[i])
     if validate_p(response) then
       local uuid = tested[i]
       found[#found+1] = uuid
@@ -315,9 +255,9 @@ action = function(host, port)
   --local tstart = stdnse.clock_ms()
 
   local hostname = "localhost"
-  local method = 'GET'
+  local method = 'HEAD'
   local uri = '/'
-  local arg = 'id'
+  local param = 'id'
   local limit = 100
 
 	-- Get the base hostname, if in argument
@@ -333,8 +273,8 @@ action = function(host, port)
 	if(nmap.registry.args.uri ~= nil) then
 		uri = nmap.registry.args.uri
 	end
-	if(nmap.registry.args.arg ~= nil) then
-		arg = nmap.registry.args.arg
+	if(nmap.registry.args.param ~= nil) then
+		param = nmap.registry.args.param
 	end
 	if(nmap.registry.args.limit ~= nil) then
 		limit = nmap.registry.args.limit
@@ -342,9 +282,9 @@ action = function(host, port)
   stdnse.print_debug(2,"Hostname is  " .. hostname) 
   stdnse.print_debug(2,"Method is " .. method) 
   stdnse.print_debug(2,"%s URI is %s",method, uri) 
-  stdnse.print_debug(2,"param name is " .. arg) 
+  stdnse.print_debug(2,"param name is " .. param) 
   stdnse.print_debug(2,"LIMIT =  " .. limit) 
 
-  return brute_param_pipeline(host,port,hostname,method,uri,arg,limit)
+  return brute_param_pipeline(host,port,hostname,method,uri,param,limit)
 	  
 end
